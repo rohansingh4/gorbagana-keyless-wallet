@@ -4,6 +4,7 @@ import { HttpAgent, Actor } from '@dfinity/agent';
 import { gor_keyless_backend } from 'declarations/gor-keyless-backend';
 import { idlFactory } from 'declarations/gor-keyless-backend/gor-keyless-backend.did.js';
 import './App.css';
+import { completeTransaction, prepareTransaction } from './submitter';
 
 function App() {
   const [authClient, setAuthClient] = useState(null);
@@ -15,7 +16,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [authenticatedBackend, setAuthenticatedBackend] = useState(null);
-  
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
   // Transaction form states
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('');
@@ -24,6 +27,29 @@ function App() {
   useEffect(() => {
     initAuth();
   }, []);
+
+  useEffect(() => {
+    if (showToast) {
+      const timer = setTimeout(() => {
+        setShowToast(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showToast]);
+
+  const showToastMessage = (message) => {
+    setToastMessage(message);
+    setShowToast(true);
+  };
+
+  const copyToClipboard = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToastMessage(`${label} copied!`);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   const initAuth = async () => {
     const client = await AuthClient.create();
@@ -42,35 +68,26 @@ function App() {
     setPrincipal(principalStr);
 
     try {
-      // Create authenticated agent
       const agent = new HttpAgent({
         identity,
         host: process.env.DFX_NETWORK === "local" ? "http://localhost:4943" : "https://ic0.app",
       });
 
-      // Fetch network root key for local development
       if (process.env.DFX_NETWORK === "local") {
         await agent.fetchRootKey();
       }
 
-      // Create authenticated backend actor
       const canisterId = process.env.CANISTER_ID_GOR_KEYLESS_BACKEND || "u6s2n-gx777-77774-qaaba-cai";
-      const backend = Actor.createActor(idlFactory, {
-        agent,
-        canisterId,
-      });
+      const backend = Actor.createActor(idlFactory, { agent, canisterId });
 
       setAuthenticatedBackend(backend);
 
-      // Check if user already has a wallet stored locally
       const storedWallet = localStorage.getItem(`wallet_${principalStr}`);
       if (storedWallet) {
-        console.log("Found existing wallet for user:", storedWallet);
         setWalletAddress(storedWallet);
         await fetchBalance(storedWallet, backend);
       } else {
-        // Generate new wallet for first-time user
-        await generateWallet(backend);
+        await generateWallet(backend, principalStr);
       }
     } catch (err) {
       console.error("Authentication setup failed:", err);
@@ -83,8 +100,8 @@ function App() {
     setError('');
     try {
       await authClient.login({
-        identityProvider: process.env.DFX_NETWORK === "local" 
-          ? `http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:4943/` 
+        identityProvider: process.env.DFX_NETWORK === "local"
+          ? `http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:4943/`
           : "https://identity.ic0.app",
         onSuccess: () => {
           handleAuthenticated(authClient);
@@ -108,35 +125,26 @@ function App() {
     setAuthenticatedBackend(null);
   };
 
-  const generateWallet = async (backend = authenticatedBackend) => {
+  const generateWallet = async (backend = authenticatedBackend, p = principal) => {
     if (!backend) {
-      setError('Backend not available. Please try signing in again.');
+      setError('Backend not available.');
       return;
     }
 
     setLoading(true);
     setError('');
-    console.log("Generating wallet for principal:", principal);
-    
+
     try {
       const result = await backend.generate_keypair_solana();
-      console.log("Generate wallet result:", result);
-      
       if ('Ok' in result) {
         const walletAddr = result.Ok;
         setWalletAddress(walletAddr);
-        
-        // Store wallet address locally for this user
-        localStorage.setItem(`wallet_${principal}`, walletAddr);
-        console.log("Wallet generated and stored:", walletAddr);
-        
+        localStorage.setItem(`wallet_${p}`, walletAddr);
         await fetchBalance(walletAddr, backend);
       } else {
         setError('Failed to generate wallet: ' + result.Err);
-        console.error("Generate wallet error:", result.Err);
       }
     } catch (err) {
-      console.error('Error generating wallet:', err);
       setError('Error generating wallet: ' + err.message);
     }
     setLoading(false);
@@ -144,23 +152,18 @@ function App() {
 
   const fetchBalance = async (address = walletAddress, backend = authenticatedBackend) => {
     if (!address || !backend) return;
-    
+
     setLoading(true);
-    console.log("Fetching balance for address:", address);
-    
+
     try {
       const result = await backend.fetch_balance(address);
-      console.log("Balance result:", result);
-      
+      console.log("first", result);
       if ('Ok' in result) {
         setBalance(result.Ok);
-        console.log("Balance fetched:", result.Ok);
       } else {
         setError('Failed to fetch balance: ' + result.Err);
-        console.error("Balance fetch error:", result.Err);
       }
     } catch (err) {
-      console.error('Error fetching balance:', err);
       setError('Error fetching balance: ' + err.message);
     }
     setLoading(false);
@@ -175,28 +178,31 @@ function App() {
     setTxResult(null);
 
     try {
-      const amountLamports = Math.floor(parseFloat(amount) * 1_000_000_000); // Convert GOR to lamports
-      console.log("Creating transaction:", { toAddress, amount, amountLamports });
-      
-      const result = await authenticatedBackend.create_and_sign_transaction({
-        to_address: toAddress,
-        amount_lamports: amountLamports,
-      });
-
-      console.log("Transaction result:", result);
+      const prepParams = {
+        senderPublicKeyString: walletAddress,
+        receiverPublicKeyString: toAddress,
+        transferAmt: amount
+      };
+      const params = await prepareTransaction(prepParams);
+      const result = await authenticatedBackend.sign_transaction_solana(params.base64Message);
+      console.log("result", result, params);
 
       if ('Ok' in result) {
-        setTxResult(result.Ok);
+        const txId = await completeTransaction({
+          ...params,
+          signatureHex: result.Ok
+        });
+        console.log("txId", txId);
+        setTxResult(txId);
         setToAddress('');
         setAmount('');
-        // Refresh balance after transaction
-        await fetchBalance();
+        fetchBalance();
+        setTimeout(() => fetchBalance(), 5000);
+        showToastMessage('Transaction signed successfully!');
       } else {
         setError('Transaction failed: ' + result.Err);
-        console.error("Transaction error:", result.Err);
       }
     } catch (err) {
-      console.error('Error creating transaction:', err);
       setError('Error creating transaction: ' + err.message);
     }
     setLoading(false);
@@ -210,103 +216,156 @@ function App() {
     <div className="app">
       <header className="app-header">
         <img src="/logo2.svg" alt="GOR Logo" className="logo" />
-        <h1>GOR Keyless Wallet</h1>
-        <p>Secure, passwordless blockchain wallet using Internet Identity</p>
+        <h1>KOSH</h1>
+        <p>A Keyless Wallet on Gorbagana Chain.</p>
       </header>
 
-      {!isAuthenticated ? (
-        <div className="auth-section">
-          <h2>Sign in to access your wallet</h2>
-          <p>Use your passkey, Face ID, Touch ID, or YubiKey to sign in securely</p>
-          <button 
-            onClick={login} 
-            disabled={loading}
-            className="login-button"
-          >
-            {loading ? 'Connecting...' : 'Sign in with Internet Identity'}
-          </button>
-        </div>
-      ) : (
-        <div className="wallet-section">
-          <div className="user-info">
-            <h3>Welcome!</h3>
-            <p><strong>Principal:</strong> {principal}</p>
-            <p><strong>Wallet Address:</strong> {walletAddress || 'Generating...'}</p>
-            <button onClick={logout} className="logout-button">Sign out</button>
+      <div className="main-card">
+        {!isAuthenticated ? (
+          <div className="auth-section">
+            <h2>Welcome Back</h2>
+            <p>Sign in with your Internet Identity to continue.</p>
+            <button
+              onClick={login}
+              disabled={loading}
+              className="login-button"
+            >
+              {loading ? 'Connecting...' : 'Sign In With Internet Identity'}
+            </button>
           </div>
+        ) : (
+          <div className="wallet-section">
+            <div className="user-info">
+              <div className="user-info-header">
+                <h3>Dashboard</h3>
+                <button onClick={logout} className="logout-button">Sign Out</button>
+              </div>
+              <div className="address-box">
+                <div className="address-item">
+                  <div className="address-label">Principal ID</div>
+                  <div className="address-display">
+                    <span className="address-text">
+                      {principal.length > 8 ? `${principal.substring(0, 12)}....${principal.substring(principal.length - 12)}` : principal}
+                    </span>
+                    <button
+                      className="copy-button"
+                      onClick={() => copyToClipboard(principal, 'Principal ID')}
+                      title="Copy Principal ID"
+                    >
+                      📋
+                    </button>
+                  </div>
+                </div>
+                {walletAddress && (
+                  <div className="address-item">
+                    <div className="address-label">Solana Wallet</div>
+                    <div className="address-display">
+                      <span className="address-text">
+                        {walletAddress.length > 8 ? `${walletAddress.substring(0, 12)}....${walletAddress.substring(walletAddress.length - 12)}` : walletAddress}
+                      </span>
+                      <button
+                        className="copy-button"
+                        onClick={() => copyToClipboard(walletAddress, 'Wallet Address')}
+                        title="Copy Wallet Address"
+                      >
+                        📋
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
 
-          {balance && (
             <div className="balance-section">
-              <h3>Balance</h3>
-              <div className="balance-display">
-                <span className="balance-amount">{balance.balance_gor.toFixed(4)} GOR</span>
-                <span className="balance-lamports">({balance.balance_lamports} lamports)</span>
-              </div>
-                             <button onClick={() => fetchBalance()} disabled={loading}>
-                {loading ? 'Refreshing...' : 'Refresh Balance'}
-              </button>
-              {!walletAddress && (
-                <button onClick={() => generateWallet()} disabled={loading} style={{marginLeft: '10px'}}>
-                  {loading ? 'Generating...' : 'Generate Wallet'}
-                </button>
+              {balance ? (
+                <div className="balance-amount-container">
+                  <div className="balance-amount">{balance.balance_gor.toFixed(4)}</div>
+                  <div className="balance-subtitle">GOR</div>
+                </div>
+              ) : (
+                <div className="balance-amount">--</div>
               )}
+              <div className="balance-actions">
+                <button onClick={() => fetchBalance()} disabled={loading}>
+                  {loading ? 'Refreshing...' : 'Refresh'}
+                </button>
+                {!walletAddress && (
+                  <button onClick={() => generateWallet()} disabled={loading}>
+                    {loading ? 'Generating...' : 'Generate Wallet'}
+                  </button>
+                )}
+              </div>
             </div>
-          )}
 
-          <div className="transaction-section">
-            <h3>Send GOR</h3>
-            <form onSubmit={sendTransaction} className="transaction-form">
-              <div className="form-group">
-                <label htmlFor="toAddress">To Address:</label>
-                <input
-                  id="toAddress"
-                  type="text"
-                  value={toAddress}
-                  onChange={(e) => setToAddress(e.target.value)}
-                  placeholder="Enter recipient address"
-                  required
-                />
+            <div className="transaction-section">
+              <h3>Send GOR</h3>
+              <form onSubmit={sendTransaction}>
+                <div className="form-group">
+                  <label htmlFor="toAddress">Recipient Address</label>
+                  <input
+                    id="toAddress"
+                    type="text"
+                    value={toAddress}
+                    onChange={(e) => setToAddress(e.target.value)}
+                    placeholder="Enter recipient's Solana address"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="amount">Amount in GOR</label>
+                  <input
+                    id="amount"
+                    type="number"
+                    step="0.000000001"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder="0.0"
+                    required
+                  />
+                </div>
+                <button type="submit" disabled={loading || !toAddress || !amount} className="submit-button">
+                  {loading ? 'Signing...' : 'Sign & Send Transaction'}
+                </button>
+              </form>
+            </div>
+
+            {txResult && (
+              <div className="result-card transaction-result">
+                <h3>✅ Transaction Signed</h3>
+                <div className="address-display">
+                  <p>Signature: <code>{txResult && txResult.length > 24 ? `${txResult.substring(0, 12)}....${txResult.substring(txResult.length - 12)}` : txResult}</code></p>
+                  <button
+                    className="copy-button"
+                    onClick={() => copyToClipboard(txResult, 'Transaction Signature')}
+                    title="Copy Transaction Signature"
+                  >
+                    📋
+                  </button>
+                  <a
+                    href={`https://gorbaganachain.xyz/#explorer?transaction=${txResult}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="explorer-link"
+                    title="View on Explorer"
+                  >
+                    ↗️
+                  </a>
+                </div>
               </div>
-              <div className="form-group">
-                <label htmlFor="amount">Amount (GOR):</label>
-                <input
-                  id="amount"
-                  type="number"
-                  step="0.000000001"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder="0.0"
-                  required
-                />
+            )}
+
+            {error && (
+              <div className="result-card error-message">
+                <p>❌ {error}</p>
               </div>
-              <button type="submit" disabled={loading || !toAddress || !amount}>
-                {loading ? 'Signing Transaction...' : 'Send Transaction'}
-              </button>
-            </form>
+            )}
           </div>
+        )}
+      </div>
 
-          {txResult && (
-            <div className="transaction-result">
-              <h3>Transaction Signed ✅</h3>
-              <div className="tx-details">
-                <p><strong>From:</strong> {txResult.from_address}</p>
-                <p><strong>To:</strong> {txResult.to_address}</p>
-                <p><strong>Amount:</strong> {(txResult.amount_lamports / 1_000_000_000).toFixed(4)} GOR</p>
-                <p><strong>Signature:</strong> <code>{txResult.signature_hex.substring(0, 32)}...</code></p>
-                <details>
-                  <summary>View Transaction Data</summary>
-                  <pre>{JSON.stringify(txResult, null, 2)}</pre>
-                </details>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="error-message">
-              <p>❌ {error}</p>
-              <button onClick={() => setError('')}>Dismiss</button>
-            </div>
-          )}
+      {showToast && (
+        <div className="toast">
+          {toastMessage}
         </div>
       )}
     </div>

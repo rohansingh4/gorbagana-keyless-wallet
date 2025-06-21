@@ -97,16 +97,16 @@ fn whoami() -> Principal {
 #[ic_cdk::update]
 async fn generate_keypair_solana() -> Result<String, String> {
     let caller = ic_cdk::caller();
-    
+
     // Don't allow anonymous calls
     if caller == Principal::anonymous() {
         return Err("Anonymous caller not allowed".to_string());
     }
-    
+
     ic_cdk::println!("Generating keypair for caller: {:?}", caller);
 
     let caller_bytes = caller.as_slice().to_vec();
-    
+
     let request = ManagementCanisterSchnorrPublicKeyRequest {
         canister_id: None,
         derivation_path: vec![caller_bytes], // Use caller's principal as derivation path
@@ -158,7 +158,7 @@ async fn generate_keypair_solana() -> Result<String, String> {
 #[ic_cdk::update]
 async fn sign_transaction_solana(hash: String) -> Result<String, String> {
     let caller = ic_cdk::caller();
-    
+
     // Don't allow anonymous calls for signing
     if caller == Principal::anonymous() {
         return Err("Anonymous caller not allowed for signing".to_string());
@@ -166,7 +166,7 @@ async fn sign_transaction_solana(hash: String) -> Result<String, String> {
 
     ic_cdk::println!("Signing transaction for caller: {:?}", caller);
     ic_cdk::println!("Transaction hash: {:?}", hash);
-    
+
     let hash_bytes = general_purpose::STANDARD.decode(&hash)
         .map_err(|e| format!("Invalid Base64 string: {}", e))?;
 
@@ -174,7 +174,7 @@ async fn sign_transaction_solana(hash: String) -> Result<String, String> {
 
     // Use caller's principal as derivation path for user-specific keys
     let caller_bytes = caller.as_slice().to_vec();
-    
+
     let internal_request = ManagementCanisterSignatureRequest {
         message: hash_bytes,
         derivation_path: vec![caller_bytes], // Use caller's principal as derivation path
@@ -216,7 +216,7 @@ pub struct SignedTransactionResponse {
 #[ic_cdk::update]
 async fn create_and_sign_transaction(request: SendTransactionRequest) -> Result<SignedTransactionResponse, String> {
     let caller = ic_cdk::caller();
-    
+
     // Don't allow anonymous calls for signing
     if caller == Principal::anonymous() {
         return Err("Anonymous caller not allowed for transaction signing".to_string());
@@ -227,13 +227,13 @@ async fn create_and_sign_transaction(request: SendTransactionRequest) -> Result<
 
     // First, generate the sender's public key/address
     let sender_address = generate_keypair_solana().await?;
-    
+
     // Here you would normally:
     // 1. Fetch recent blockhash from GOR RPC
     // 2. Create a proper Solana transaction
     // 3. Serialize it for signing
     // 4. Sign the transaction hash
-    
+
     // For now, let's create a simple message to sign (you'll need to implement proper transaction creation)
     let transaction_message = format!(
         "{{\"from\":\"{}\",\"to\":\"{}\",\"amount\":{},\"timestamp\":{}}}",
@@ -242,15 +242,15 @@ async fn create_and_sign_transaction(request: SendTransactionRequest) -> Result<
         request.amount_lamports,
         ic_cdk::api::time()
     );
-    
+
     ic_cdk::println!("Transaction message: {}", transaction_message);
-    
+
     // Convert to base64 for signing
     let transaction_base64 = general_purpose::STANDARD.encode(transaction_message.as_bytes());
-    
+
     // Sign the transaction
     let signature_hex = sign_transaction_solana(transaction_base64.clone()).await?;
-    
+
     Ok(SignedTransactionResponse {
         transaction_base64,
         signature_hex,
@@ -294,10 +294,10 @@ async fn fetch_balance(address: String) -> Result<BalanceResponse, String> {
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
             ic_cdk::println!("HTTP Response status: {}", response.status);
-            
+
             let response_body = String::from_utf8(response.body)
                 .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
-            
+
             ic_cdk::println!("Response body: {}", response_body);
 
             let rpc_response: JsonRpcResponse = serde_json::from_str(&response_body)
@@ -312,16 +312,16 @@ async fn fetch_balance(address: String) -> Result<BalanceResponse, String> {
                     if let Some(value) = value_obj.get("value") {
                         let balance_lamports = value.as_u64()
                             .ok_or_else(|| "Balance value is not a valid number".to_string())?;
-                        
+
                         let balance_gor = balance_lamports as f64 / 1_000_000_000.0; // Convert lamports to GOR
-                        
+
                         return Ok(BalanceResponse {
                             balance_lamports,
                             balance_gor,
                         });
                     }
                 }
-                
+
                 // Fallback: try to parse result directly as number
                 if let Some(balance_lamports) = result.as_u64() {
                     let balance_gor = balance_lamports as f64 / 1_000_000_000.0;
@@ -330,7 +330,7 @@ async fn fetch_balance(address: String) -> Result<BalanceResponse, String> {
                         balance_gor,
                     });
                 }
-                
+
                 return Err(format!("Unexpected result format: {}", result));
             }
 
@@ -375,7 +375,7 @@ fn transform(raw: TransformArgs) -> HttpResponse {
 
     let mut sanitized_headers = Vec::new();
     for header in raw.response.headers {
-        if header.name.to_lowercase().starts_with("x-") 
+        if header.name.to_lowercase().starts_with("x-")
             || header.name.to_lowercase() == "content-type"
             || header.name.to_lowercase() == "content-length" {
             sanitized_headers.push(header);
@@ -390,4 +390,3 @@ fn transform(raw: TransformArgs) -> HttpResponse {
 }
 
 ic_cdk::export_candid!();
-
