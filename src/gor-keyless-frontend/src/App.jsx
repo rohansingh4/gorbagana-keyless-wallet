@@ -17,7 +17,8 @@ function App() {
   const [principal, setPrincipal] = useState('');
   const [walletAddress, setWalletAddress] = useState('');
   const [balance, setBalance] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingSend, setLoadingSend] = useState(false);
+  const [loadingBalance, setLoadingBalance] = useState(false);
   const [error, setError] = useState('');
   const [authenticatedBackend, setAuthenticatedBackend] = useState(null);
   const [showToast, setShowToast] = useState(false);
@@ -112,7 +113,7 @@ function App() {
   };
 
   const login = async () => {
-    setLoading(true);
+    setLoadingBalance(true);
     setError('');
     try {
       await authClient.login({
@@ -126,7 +127,7 @@ function App() {
     } catch (err) {
       setError('Login failed: ' + err.message);
     }
-    setLoading(false);
+    setLoadingBalance(false);
   };
 
   const logout = async () => {
@@ -147,7 +148,7 @@ function App() {
       return;
     }
 
-    setLoading(true);
+    setLoadingBalance(true);
     setError('');
 
     try {
@@ -163,13 +164,13 @@ function App() {
     } catch (err) {
       setError('Error generating wallet: ' + err.message);
     }
-    setLoading(false);
+    setLoadingBalance(false);
   };
 
   const fetchBalance = async (address = walletAddress, backend = authenticatedBackend) => {
     if (!address || !backend) return;
 
-    setLoading(true);
+    setLoadingBalance(true);
 
     try {
       const result = await backend.fetch_balance(address);
@@ -182,14 +183,14 @@ function App() {
     } catch (err) {
       setError('Error fetching balance: ' + err.message);
     }
-    setLoading(false);
+    setLoadingBalance(false);
   };
 
   const sendTransaction = async (e) => {
     e.preventDefault();
     if (!toAddress || !amount || !authenticatedBackend) return;
 
-    setLoading(true);
+    setLoadingSend(true);
     setError('');
     setTxResult(null);
 
@@ -230,7 +231,7 @@ function App() {
     } catch (err) {
       setError('Error creating transaction: ' + err.message);
     }
-    setLoading(false);
+    setLoadingSend(false);
   };
 
   if (!authClient) {
@@ -252,10 +253,10 @@ function App() {
             <p>Sign in with your Internet Identity to continue.</p>
             <button
               onClick={login}
-              disabled={loading}
+              disabled={loadingBalance}
               className="login-button"
             >
-              {loading ? 'Connecting...' : 'Sign In With Internet Identity'}
+              {loadingBalance ? 'Connecting...' : 'Sign In With Internet Identity'}
             </button>
           </div>
         ) : (
@@ -311,12 +312,12 @@ function App() {
                 <div className="balance-amount">--</div>
               )}
               <div className="balance-actions">
-                <button onClick={() => fetchBalance()} disabled={loading}>
-                  {loading ? 'Refreshing...' : 'Refresh'}
+                <button onClick={() => fetchBalance()} disabled={loadingBalance}>
+                  {loadingBalance ? 'Refreshing...' : 'Refresh'}
                 </button>
                 {!walletAddress && (
-                  <button onClick={() => generateWallet()} disabled={loading}>
-                    {loading ? 'Generating...' : 'Generate Wallet'}
+                  <button onClick={() => generateWallet()} disabled={loadingBalance}>
+                    {loadingBalance ? 'Generating...' : 'Generate Wallet'}
                   </button>
                 )}
               </div>
@@ -348,8 +349,8 @@ function App() {
                     required
                   />
                 </div>
-                <button type="submit" disabled={loading || !toAddress || !amount} className="submit-button">
-                  {loading ? 'Signing...' : 'Sign & Send Transaction'}
+                <button type="submit" disabled={loadingSend || !toAddress || !amount} className="submit-button">
+                  {loadingSend ? 'Signing...' : 'Sign & Send Transaction'}
                 </button>
               </form>
             </div>
