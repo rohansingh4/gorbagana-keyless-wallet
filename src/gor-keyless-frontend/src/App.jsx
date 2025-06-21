@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { AuthClient } from '@dfinity/auth-client';
-import { HttpAgent } from '@dfinity/agent';
+import { HttpAgent, Actor } from '@dfinity/agent';
 import { gor_keyless_backend } from 'declarations/gor-keyless-backend';
+import { idlFactory } from 'declarations/gor-keyless-backend/gor-keyless-backend.did.js';
 import './App.css';
 
 function App() {
@@ -13,6 +14,7 @@ function App() {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [authenticatedBackend, setAuthenticatedBackend] = useState(null);
   
   // Transaction form states
   const [toAddress, setToAddress] = useState('');
@@ -36,25 +38,44 @@ function App() {
     const identity = client.getIdentity();
     setIdentity(identity);
     setIsAuthenticated(true);
-    setPrincipal(identity.getPrincipal().toString());
+    const principalStr = identity.getPrincipal().toString();
+    setPrincipal(principalStr);
 
-    // Create authenticated agent
-    const agent = new HttpAgent({
-      identity,
-      host: process.env.DFX_NETWORK === "local" ? "http://localhost:4943" : "https://ic0.app",
-    });
+    try {
+      // Create authenticated agent
+      const agent = new HttpAgent({
+        identity,
+        host: process.env.DFX_NETWORK === "local" ? "http://localhost:4943" : "https://ic0.app",
+      });
 
-    // Fetch network root key for local development
-    if (process.env.DFX_NETWORK === "local") {
-      agent.fetchRootKey();
+      // Fetch network root key for local development
+      if (process.env.DFX_NETWORK === "local") {
+        await agent.fetchRootKey();
+      }
+
+      // Create authenticated backend actor
+      const canisterId = process.env.CANISTER_ID_GOR_KEYLESS_BACKEND || "u6s2n-gx777-77774-qaaba-cai";
+      const backend = Actor.createActor(idlFactory, {
+        agent,
+        canisterId,
+      });
+
+      setAuthenticatedBackend(backend);
+
+      // Check if user already has a wallet stored locally
+      const storedWallet = localStorage.getItem(`wallet_${principalStr}`);
+      if (storedWallet) {
+        console.log("Found existing wallet for user:", storedWallet);
+        setWalletAddress(storedWallet);
+        await fetchBalance(storedWallet, backend);
+      } else {
+        // Generate new wallet for first-time user
+        await generateWallet(backend);
+      }
+    } catch (err) {
+      console.error("Authentication setup failed:", err);
+      setError("Failed to set up authenticated connection: " + err.message);
     }
-
-    // Set the agent for the backend actor
-    const authenticatedBackend = gor_keyless_backend._service;
-    authenticatedBackend._agent = agent;
-
-    // Generate wallet address for this user
-    await generateWallet();
   };
 
   const login = async () => {
@@ -84,37 +105,62 @@ function App() {
     setBalance(null);
     setError('');
     setTxResult(null);
+    setAuthenticatedBackend(null);
   };
 
-  const generateWallet = async () => {
+  const generateWallet = async (backend = authenticatedBackend) => {
+    if (!backend) {
+      setError('Backend not available. Please try signing in again.');
+      return;
+    }
+
     setLoading(true);
     setError('');
+    console.log("Generating wallet for principal:", principal);
+    
     try {
-      const result = await gor_keyless_backend.generate_keypair_solana();
+      const result = await backend.generate_keypair_solana();
+      console.log("Generate wallet result:", result);
+      
       if ('Ok' in result) {
-        setWalletAddress(result.Ok);
-        await fetchBalance(result.Ok);
+        const walletAddr = result.Ok;
+        setWalletAddress(walletAddr);
+        
+        // Store wallet address locally for this user
+        localStorage.setItem(`wallet_${principal}`, walletAddr);
+        console.log("Wallet generated and stored:", walletAddr);
+        
+        await fetchBalance(walletAddr, backend);
       } else {
         setError('Failed to generate wallet: ' + result.Err);
+        console.error("Generate wallet error:", result.Err);
       }
     } catch (err) {
+      console.error('Error generating wallet:', err);
       setError('Error generating wallet: ' + err.message);
     }
     setLoading(false);
   };
 
-  const fetchBalance = async (address = walletAddress) => {
-    if (!address) return;
+  const fetchBalance = async (address = walletAddress, backend = authenticatedBackend) => {
+    if (!address || !backend) return;
     
     setLoading(true);
+    console.log("Fetching balance for address:", address);
+    
     try {
-      const result = await gor_keyless_backend.fetch_balance(address);
+      const result = await backend.fetch_balance(address);
+      console.log("Balance result:", result);
+      
       if ('Ok' in result) {
         setBalance(result.Ok);
+        console.log("Balance fetched:", result.Ok);
       } else {
         setError('Failed to fetch balance: ' + result.Err);
+        console.error("Balance fetch error:", result.Err);
       }
     } catch (err) {
+      console.error('Error fetching balance:', err);
       setError('Error fetching balance: ' + err.message);
     }
     setLoading(false);
@@ -122,7 +168,7 @@ function App() {
 
   const sendTransaction = async (e) => {
     e.preventDefault();
-    if (!toAddress || !amount) return;
+    if (!toAddress || !amount || !authenticatedBackend) return;
 
     setLoading(true);
     setError('');
@@ -130,11 +176,14 @@ function App() {
 
     try {
       const amountLamports = Math.floor(parseFloat(amount) * 1_000_000_000); // Convert GOR to lamports
+      console.log("Creating transaction:", { toAddress, amount, amountLamports });
       
-      const result = await gor_keyless_backend.create_and_sign_transaction({
+      const result = await authenticatedBackend.create_and_sign_transaction({
         to_address: toAddress,
         amount_lamports: amountLamports,
       });
+
+      console.log("Transaction result:", result);
 
       if ('Ok' in result) {
         setTxResult(result.Ok);
@@ -144,8 +193,10 @@ function App() {
         await fetchBalance();
       } else {
         setError('Transaction failed: ' + result.Err);
+        console.error("Transaction error:", result.Err);
       }
     } catch (err) {
+      console.error('Error creating transaction:', err);
       setError('Error creating transaction: ' + err.message);
     }
     setLoading(false);
@@ -191,9 +242,14 @@ function App() {
                 <span className="balance-amount">{balance.balance_gor.toFixed(4)} GOR</span>
                 <span className="balance-lamports">({balance.balance_lamports} lamports)</span>
               </div>
-              <button onClick={() => fetchBalance()} disabled={loading}>
+                             <button onClick={() => fetchBalance()} disabled={loading}>
                 {loading ? 'Refreshing...' : 'Refresh Balance'}
               </button>
+              {!walletAddress && (
+                <button onClick={() => generateWallet()} disabled={loading} style={{marginLeft: '10px'}}>
+                  {loading ? 'Generating...' : 'Generate Wallet'}
+                </button>
+              )}
             </div>
           )}
 
