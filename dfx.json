@@ -1,0 +1,27 @@
+{
+  "canisters": {
+    "gor-keyless-backend": {
+      "candid": "src/gor-keyless-backend/gor-keyless-backend.did",
+      "package": "gor-keyless-backend",
+      "type": "rust"
+    },
+    "gor-keyless-frontend": {
+      "dependencies": [
+        "gor-keyless-backend"
+      ],
+      "source": [
+        "src/gor-keyless-frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "gor-keyless-frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

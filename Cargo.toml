@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "src/gor-keyless-backend"
+]
+resolver = "2"
