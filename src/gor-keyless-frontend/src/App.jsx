@@ -6,6 +6,10 @@ import { idlFactory } from 'declarations/gor-keyless-backend/gor-keyless-backend
 import './App.css';
 import { completeTransaction, prepareTransaction } from './submitter';
 
+console.log = () => { };
+console.error = () => { };
+console.warn = () => { };
+
 function App() {
   const [authClient, setAuthClient] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -23,6 +27,12 @@ function App() {
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('');
   const [txResult, setTxResult] = useState(null);
+
+  useEffect(() => {
+    console.log = () => { };
+    console.error = () => { };
+    console.warn = () => { };
+  }, []);
 
   useEffect(() => {
     initAuth();
