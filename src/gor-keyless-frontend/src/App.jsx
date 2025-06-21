@@ -206,6 +206,15 @@ function App() {
         setTxResult(txId);
         setToAddress('');
         setAmount('');
+        
+        // Increment transaction counter on successful transaction
+        try {
+          await authenticatedBackend.increment_transaction_counter();
+          console.log("Transaction counter incremented");
+        } catch (counterErr) {
+          console.warn("Failed to increment transaction counter:", counterErr);
+        }
+        
         fetchBalance();
         setTimeout(() => fetchBalance(), 5000);
         showToastMessage('Transaction signed successfully!');

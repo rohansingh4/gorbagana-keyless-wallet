@@ -6,8 +6,79 @@ use base64::{Engine as _, engine::general_purpose};
 use ic_cdk::api::management_canister::http_request::{
     http_request, CanisterHttpRequestArgument, HttpHeader, HttpMethod, HttpResponse, TransformArgs, TransformContext
 };
+use std::cell::RefCell;
+use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
+use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap, Storable, storable::Bound};
+use std::borrow::Cow;
 
 type CanisterId = Principal;
+type Memory = VirtualMemory<DefaultMemoryImpl>;
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize)]
+struct CounterData {
+    accounts: u64,
+    transactions: u64,
+}
+
+impl Storable for CounterData {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        Cow::Owned(candid::encode_one(self).unwrap())
+    }
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        candid::decode_one(&bytes).unwrap()
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct AccountKey(String);
+
+impl Storable for AccountKey {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        Cow::Borrowed(self.0.as_bytes())
+    }
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        AccountKey(String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct AccountValue(String);
+
+impl Storable for AccountValue {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        Cow::Borrowed(self.0.as_bytes())
+    }
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        AccountValue(String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    const BOUND: Bound = Bound::Unbounded;
+}
+
+thread_local! {
+    static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> = RefCell::new(
+        MemoryManager::init(DefaultMemoryImpl::default())
+    );
+
+    static COUNTER_STORAGE: RefCell<StableBTreeMap<AccountKey, CounterData, Memory>> = RefCell::new(
+        StableBTreeMap::init(
+            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(0)))
+        )
+    );
+
+    static ACCOUNT_STORAGE: RefCell<StableBTreeMap<AccountKey, AccountValue, Memory>> = RefCell::new(
+        StableBTreeMap::init(
+            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(1)))
+        )
+    );
+}
 
 #[derive(CandidType, Debug)]
 pub struct PublicKeyReply {
@@ -73,6 +144,12 @@ pub struct BalanceResponse {
     pub balance_gor: f64,
 }
 
+#[derive(CandidType, Serialize, Deserialize, Debug)]
+pub struct WalletStats {
+    pub total_accounts: u64,
+    pub total_transactions: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct JsonRpcRequest {
     jsonrpc: String,
@@ -92,6 +169,56 @@ struct JsonRpcResponse {
 #[ic_cdk::query]
 fn whoami() -> Principal {
     ic_cdk::caller()
+}
+
+fn get_counters() -> CounterData {
+    COUNTER_STORAGE.with(|storage| {
+        storage.borrow()
+            .get(&AccountKey("counters".to_string()))
+            .unwrap_or(CounterData { accounts: 0, transactions: 0 })
+    })
+}
+
+fn update_counters(data: CounterData) {
+    COUNTER_STORAGE.with(|storage| {
+        storage.borrow_mut().insert(AccountKey("counters".to_string()), data);
+    });
+}
+
+#[ic_cdk::query]
+fn get_total_accounts() -> u64 {
+    get_counters().accounts
+}
+
+#[ic_cdk::query]
+fn get_total_transactions() -> u64 {
+    get_counters().transactions
+}
+
+#[ic_cdk::update]
+fn increment_transaction_counter() -> u64 {
+    let caller = ic_cdk::caller();
+    
+    // Don't allow anonymous calls
+    if caller == Principal::anonymous() {
+        ic_cdk::trap("Anonymous caller not allowed");
+    }
+    
+    let mut counters = get_counters();
+    counters.transactions += 1;
+    update_counters(counters.clone());
+    
+    ic_cdk::println!("Transaction completed! Total transactions: {}", counters.transactions);
+    counters.transactions
+}
+
+#[ic_cdk::query]
+fn get_wallet_stats() -> WalletStats {
+    let counters = get_counters();
+    WalletStats {
+        total_accounts: counters.accounts,
+        total_transactions: counters.transactions,
+    }
 }
 
 #[ic_cdk::update]
@@ -149,6 +276,25 @@ async fn generate_keypair_solana() -> Result<String, String> {
     let solana_address = bs58::encode(public_key_bytes).into_string();
     // let pubkey = Pubkey::new(&public_key_bytes);
     ic_cdk::println!("Solana Address: {}", solana_address);
+
+    // Check if this is a new account and increment counter
+    let is_new_account = ACCOUNT_STORAGE.with(|storage| {
+        let mut storage_ref = storage.borrow_mut();
+        let key = AccountKey(solana_address.clone());
+        if storage_ref.get(&key).is_none() {
+            storage_ref.insert(key, AccountValue("generated".to_string()));
+            true
+        } else {
+            false
+        }
+    });
+
+    if is_new_account {
+        let mut counters = get_counters();
+        counters.accounts += 1;
+        update_counters(counters.clone());
+        ic_cdk::println!("New account generated! Total accounts: {}", counters.accounts);
+    }
 
     Ok(solana_address)
 }
@@ -387,6 +533,21 @@ fn transform(raw: TransformArgs) -> HttpResponse {
         body: raw.response.body,
         headers: sanitized_headers,
     }
+}
+
+#[ic_cdk::init]
+fn init() {
+    ic_cdk::println!("Initializing GOR Keyless Wallet backend");
+}
+
+#[ic_cdk::pre_upgrade]
+fn pre_upgrade() {
+    ic_cdk::println!("Preparing for upgrade");
+}
+
+#[ic_cdk::post_upgrade]
+fn post_upgrade() {
+    ic_cdk::println!("Upgrade completed");
 }
 
 ic_cdk::export_candid!();

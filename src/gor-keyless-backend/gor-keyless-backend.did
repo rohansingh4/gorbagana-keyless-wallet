@@ -16,6 +16,11 @@ type SignedTransactionResponse = record {
     amount_lamports : nat64;
 };
 
+type WalletStats = record {
+    total_accounts : nat64;
+    total_transactions : nat64;
+};
+
 type Result = variant { Ok : text; Err : text };
 type Result_1 = variant { Ok : BalanceResponse; Err : text };
 type Result_2 = variant { Ok : SignedTransactionResponse; Err : text };
@@ -26,6 +31,10 @@ service : {
     sign_transaction_solana : (text) -> (Result);
     fetch_balance : (text) -> (Result_1);
     create_and_sign_transaction : (SendTransactionRequest) -> (Result_2);
+    get_total_accounts : () -> (nat64) query;
+    get_total_transactions : () -> (nat64) query;
+    get_wallet_stats : () -> (WalletStats) query;
+    increment_transaction_counter : () -> (nat64);
     transform : (record {
         response : record {
             status : nat;
