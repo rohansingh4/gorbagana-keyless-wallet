@@ -63,7 +63,7 @@ function App() {
     try {
       await authClient.login({
         identityProvider: process.env.DFX_NETWORK === "local" 
-          ? `http://localhost:4943/?canister=${process.env.INTERNET_IDENTITY_CANISTER_ID}` 
+          ? `http://rdmx6-jaaaa-aaaaa-aaadq-cai.localhost:4943/` 
           : "https://identity.ic0.app",
         onSuccess: () => {
           handleAuthenticated(authClient);
