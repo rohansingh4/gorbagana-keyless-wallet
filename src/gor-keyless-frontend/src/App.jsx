@@ -42,7 +42,7 @@ function App() {
     if (showToast) {
       const timer = setTimeout(() => {
         setShowToast(false);
-      }, 3000);
+      }, 4000);
       return () => clearTimeout(timer);
     }
   }, [showToast]);
@@ -53,11 +53,17 @@ function App() {
   };
 
   const copyToClipboard = async (text, label) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      showToastMessage(`${label} copied!`);
-    } catch (err) {
-      console.error('Failed to copy:', err);
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToastMessage(`${label} copied!`);
+        return;
+      } catch (err) {
+        console.warn('Clipboard API failed, trying fallback.', err);
+      }
+    } else {
+      // showToastMessage(`Not able to copy! -> ${text}`);
+      alert(`Copy! -> ${text}`);
     }
   };
 
@@ -206,7 +212,7 @@ function App() {
         setTxResult(txId);
         setToAddress('');
         setAmount('');
-        
+
         // Increment transaction counter on successful transaction
         try {
           await authenticatedBackend.increment_transaction_counter();
@@ -214,9 +220,9 @@ function App() {
         } catch (counterErr) {
           console.warn("Failed to increment transaction counter:", counterErr);
         }
-        
-        fetchBalance();
-        setTimeout(() => fetchBalance(), 5000);
+
+        setTimeout(async () => await fetchBalance(), 3000);
+        setTimeout(async () => await fetchBalance(), 10000);
         showToastMessage('Transaction signed successfully!');
       } else {
         setError('Transaction failed: ' + result.Err);
