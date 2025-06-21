@@ -226,7 +226,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <img src="/logo2.svg" alt="GOR Logo" className="logo" />
-        <h1>KOSH</h1>
+        <h1>Trashpack <span>v1.0</span></h1>
         <p>A Keyless Wallet on Gorbagana Chain.</p>
       </header>
 
